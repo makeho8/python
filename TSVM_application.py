@@ -1,0 +1,267 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial.distance import cdist
+from cvxopt import matrix, solvers
+#np.random.seed(21)
+#from matplotlib.backends.backend_pdf import PdfPages
+
+
+### Load data
+
+data_old = np.genfromtxt('heart.dat')
+#print(data)
+labels = data_old[:,-1].reshape((270,))
+data_new = np.delete(data_old, np.s_[-1], axis = 1)
+#print(data_new, labels)
+train_data = data_new[:240]
+test_data = data_new[240:]
+labels_train = labels[:240]
+labels_test = labels[240:]
+
+idx1 = np.where(labels_train == 1)
+idx2 = np.where(labels_train == 2)
+A_train = train_data[idx1]
+A_train_labels = labels_train[idx1]
+B_train = train_data[idx2]
+B_train_labels = labels_train[idx2]
+AB_train = np.vstack((A_train,B_train))
+
+idx3 = np.where(labels_test == 1)
+idx4 = np.where(labels_test == 2)
+A_test = test_data[idx3]
+A_test_labels = labels_test[idx3]
+B_test = test_data[idx4]
+B_test_labels = labels_test[idx4]
+AB_test = np.vstack((A_test,B_test))
+
+###solving by dual_TWSVM
+def TSVM_solver(A,B,y1,y2,c1,c2):
+    m1 = A.shape[0]
+    m2 = B.shape[0]
+    m = m1 + m2
+    AB = np.vstack((A,B))
+    y = np.vstack((np.ones((m1,1)), 2*np.ones((m2,1)))).reshape((m,))
+    ## DTWSVM1
+    # Build K1, q1, G1, h1
+    e1 = np.ones((m1,1))
+    e2 = np.ones((m2,1))
+    H = np.hstack((A,e1))
+    G = np.hstack((B,e2))
+    K1 = matrix(G.dot(np.linalg.inv(H.T.dot(H))).dot(G.T))
+    q1 = matrix(-e2)
+    G1 = matrix(np.vstack((-np.eye(m2),np.eye(m2))))
+    h1 = matrix(np.vstack((np.zeros((m2,1)),c1*np.ones((m2,1)))))
+
+    solvers.options['show_progress'] = False
+    sol = solvers.qp(K1,q1, G1, h1)
+
+    al = np.array(sol['x'])
+    #print('alpha = \n', al.T)
+
+    ## DTWSVM2
+    # build K2, q2, G2, h2
+    K2 = matrix(H.dot(np.linalg.inv(G.T.dot(G))).dot(H.T))
+    q2 = matrix(-e1)
+    G2 = matrix(np.vstack((-np.eye(m1),np.eye(m1))))
+    h2 = matrix(np.vstack((np.zeros((m1,1)),c2*np.ones((m1,1)))))
+
+    solvers.options['show_progress'] = False
+    sol = solvers.qp(K2,q2,G2,h2)
+    gam = np.array(sol['x'])
+    #print('gamma = \n', gam.T)
+
+    S1 = np.where(al > 1e-5)[0]
+    S2 = np.where(gam > 1e-5)[0]
+    alS1 = al[S1]
+    gamS2 = gam[S2]
+    GS1 = G[S1,:]
+    HS2 = H[S2,:]
+    u = -np.linalg.inv(H.T.dot(H)).dot(GS1.T).dot(alS1)
+    v = np.linalg.inv(G.T.dot(G)).dot(HS2.T).dot(gamS2)
+    #print(u,v)
+    w1 = u[:-1]
+    b1 = u[-1]
+    w2 = v[:-1]
+    b2 = v[-1]
+    return w1, b1, w2, b2
+
+import time
+start_time = time.time()
+w1_tsvm, b1_tsvm, w2_tsvm, b2_tsvm = TSVM_solver(A_train,B_train,A_train_labels,B_train_labels,c1=1000,c2=1000)
+end_time = time.time()
+print('total run-time of TSVM: %f ms' %((end_time - start_time)*1000))
+
+def predict_class(x,w1,b1,w2,b2):
+    y1 = np.abs(x.T.dot(w1) + b1)
+    y2 = np.abs(x.T.dot(w2) + b2)
+    y_pred_x = None
+    if y1 <= y2:
+        y_pred_x = 1.
+    else:
+        y_pred_x = 2.
+        
+    return y_pred_x
+
+def predict_TSVM(X,w1,b1,w2,b2):
+    y_pred = []
+    for i in range(X.shape[0]):
+        y_pred_i = predict_class(X[i,:],w1,b1,w2,b2)
+        y_pred.append(y_pred_i)
+    
+    y_pred_TSVM = np.array(y_pred)
+    return y_pred_TSVM
+
+y_pred_train = predict_TSVM(AB_train,w1_tsvm,b1_tsvm,w2_tsvm,b2_tsvm)
+accuracy_train = np.mean(labels_train == y_pred_train)
+print('training accuracy of TSVM: ', 100*accuracy_train)
+
+y_pred_test = predict_TSVM(AB_test,w1_tsvm,b1_tsvm,w2_tsvm,b2_tsvm)
+accuracy_test = np.mean(labels_test == y_pred_test)
+print('testing accuracy of TSVM: ', 100*accuracy_test)
+
+#Solving by sklearn softSVM
+from sklearn import svm
+from sklearn.svm import SVC
+import time
+
+C = 100
+start_time = time.time()
+clf = SVC(kernel = 'linear', C = C)
+clf.fit(AB_train, labels_train)
+w_sklearn = clf.coef_.reshape(-1,1)
+b_sklearn = clf.intercept_[0]
+end_time = time.time()
+print('total run-time of SVM: %f ms' %((end_time - start_time)*1000))
+print(w_sklearn, b_sklearn)
+
+def predict_SVM(X,w,b):
+    y_pred = []
+    for i in range(X.shape[0]):
+        if np.sign(X[i].dot(w)+b) > 0:
+            yi = 1.
+        else:
+            yi = 2.
+        
+        y_pred.append(yi)
+    return y_pred
+
+y_train_pred = predict_SVM(AB_train,w_sklearn,b_sklearn)
+print('training accuracy of softSVM: %f' %(100*np.mean(labels_train == y_train_pred),))
+y_test_pred = predict_SVM(AB_test,w_sklearn,b_sklearn)
+print('testing accuracy of softSVM: %f' %(100*np.mean(labels_test == y_test_pred)))
+
+### TSVM with kernel (KTWSVM)
+def rbf(x,y,gam=0.1):
+    return np.exp(-gam*((np.linalg.norm(x-y))**2))
+
+def Kernel_1(x,Y,gam=0.1):
+    n = Y.shape[1]
+    K = np.zeros((1,n))
+    for j in range(n):
+        K[0,j] = rbf(x,Y[:,j],gam=0.1)
+    return K
+
+def Kernel(X,Y, gam=0.1):
+    m = X.shape[0]
+    n = Y.shape[1]
+    K = np.zeros((m,n))
+    for i in range(m):
+        for j in range(n):
+            K[i,j] = rbf(X[i,:],Y[:,j],gam=0.1)
+            
+    return K
+
+def KTSVM_solver(A,B,y1,y2,c1,c2):
+    m1 = A.shape[0]
+    m2 = B.shape[0]
+    m = m1 + m2
+    AB = np.vstack((A,B))
+    C = AB
+    y = np.vstack((np.ones((m1,1)), 2*np.ones((m2,1)))).reshape((m,))
+    ## DKTWSVM1
+    # Build K1, q1, G1, h1
+    e1 = np.ones((m1,1))
+    e2 = np.ones((m2,1))
+    S = np.hstack((Kernel(A,C.T,1),e1))
+    R = np.hstack((Kernel(B,C.T,1),e2))
+    I = np.eye(m+1)
+    K1 = matrix(R.dot(np.linalg.inv(S.T.dot(S)+0.001*I)).dot(R.T))
+    q1 = matrix(-e2)
+    G1 = matrix(np.vstack((-np.eye(m2),np.eye(m2))))
+    h1 = matrix(np.vstack((np.zeros((m2,1)),c1*np.ones((m2,1)))))
+
+    solvers.options['show_progress'] = False
+    sol = solvers.qp(K1,q1, G1, h1)
+
+    al = np.array(sol['x'])
+    #print('alpha = \n', al.T)
+
+    ## DKTWSVM2
+    # build K2, q2, G2, h2
+    K2 = matrix(S.dot(np.linalg.inv(R.T.dot(R)+0.001*I)).dot(S.T))
+    q2 = matrix(-e1)
+    G2 = matrix(np.vstack((-np.eye(m1),np.eye(m1))))
+    h2 = matrix(np.vstack((np.zeros((m1,1)),c2*np.ones((m1,1)))))
+
+    solvers.options['show_progress'] = False
+    sol = solvers.qp(K2,q2,G2,h2)
+    gam = np.array(sol['x'])
+    #print('gamma = \n', gam.T)
+
+    S1 = np.where(al > 1e-5)[0]
+    S2 = np.where(gam > 1e-5)[0]
+    alS1 = al[S1]
+    gamS2 = gam[S2]
+    RS1 = R[S1,:]
+    SS2 = S[S2,:]
+    z1 = -np.linalg.inv(S.T.dot(S)+0.001*I).dot(RS1.T).dot(alS1)
+    z2 = np.linalg.inv(R.T.dot(R)+0.001*I).dot(SS2.T).dot(gamS2)
+    #print(z1,z2)
+    u1 = z1[:-1]
+    b1 = z1[-1][0]
+    u2 = z2[:-1]
+    b2 = z2[-1][0]
+    return u1, b1, u2, b2
+
+#w1_train, b1_train, w2_train, b2_train = KTSVM_solver(A_train,B_train,A_train_labels,B_train_labels,c1=1000,c2=1000)
+
+### Load data
+
+#import pandas as pd
+#data_old = pd.read_csv('hepatitis.data', sep = ',', header = None).values
+
+u1_Ktsvm, b1_Ktsvm, u2_Ktsvm, b2_Ktsvm = KTSVM_solver(A_train,B_train,A_train_labels,B_train_labels,c1=1000,c2=1000)
+
+def predict_KTSVM_1(x,C,u1,b1,u2,b2):
+    
+    y1 = np.abs((Kernel_1(x, C.T, 1)).dot(u1)+b1)
+    y2 = np.abs((Kernel_1(x, C.T, 1)).dot(u2)+b2)
+    if y1[0] < y2[0]:
+        y_i = 1
+    else:
+        y_i = 2
+    
+    return y_i
+
+def predict_KTSVM(X,C,u1,b1,u2,b2):
+    y_pred = []
+    for i in range(X.shape[0]):
+        y_i = None
+        y1 = np.abs((Kernel_1(X[i,:], C.T, gam=0.1)).dot(u1)+b1)
+        y2 = np.abs((Kernel_1(X[i,:], C.T, gam=0.1)).dot(u2)+b2)
+        if y1[0] < y2[0]:
+            y_i = 1
+        else:
+            y_i = -1
+    
+        y_pred.append(y_i)
+    return y_pred
+    
+C = AB_train
+y_train_pred_KTSVM = predict_KTSVM(AB_train,C,u1_Ktsvm,b1_Ktsvm,u2_Ktsvm,b2_Ktsvm)
+accuracy_train = np.mean(labels_train == y_train_pred_KTSVM)
+print('training accuracy of KTSVM: ', 100*accuracy_train)
+
+y_test_pred_KTSVM = predict_KTSVM(AB_test,C,u1_Ktsvm,b1_Ktsvm,u2_Ktsvm,b2_Ktsvm)
+accuracy_test = np.mean(labels_test == y_test_pred_KTSVM)
+print('testing accuracy of KTSVM: ', 100*accuracy_test)
