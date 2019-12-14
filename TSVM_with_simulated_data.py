@@ -42,15 +42,15 @@ def gen_non_lin_separable_data():
     return A, A_labels, B, B_labels
 
 #A, A_labels, B, B_labels = gen_lin_separable_data()
-#A, A_labels, B, B_labels = gen_lin_separable_overlap_data()
-A, A_labels, B, B_labels = gen_non_lin_separable_data()
+A, A_labels, B, B_labels = gen_lin_separable_overlap_data()
+#A, A_labels, B, B_labels = gen_non_lin_separable_data()
 
 # Minh hoa du lieu
 with PdfPages('data.pdf') as pdf:
     plt.plot(A[:,0], A[:,1], 'bs', markersize = 8, alpha = 1)
     plt.plot(B[:,0], B[:,1], 'ro', markersize = 8, alpha = 1)
     plt.axis('tight')
-    plt.title('Overlap_data', fontsize = 20)
+    plt.title('Dữ liệu gần tách được tuyến tính', fontsize = 20)
     
     #hide ticks
     #cur_axes = plt.gca()
@@ -99,7 +99,11 @@ def SVM_solver(A, B, y1, y2, c):
     #print(w_dual, b_dual)
     return w_dual, b_dual, y
 
+import time
+start_time = time.time()
 w_dual, b_dual, y = SVM_solver(A, B, A_labels, B_labels, c=1)
+end_time = time.time()
+print('total run-time of SVM: %f ms' %((end_time - start_time)*1000))
 
 def pred_class(x,w,b):
     return np.sign(x.T.dot(w) + b)
@@ -146,7 +150,7 @@ def myplot(A, B, w, b, filename, tit):
 
         plt.xlabel('$A^1$', fontsize = 20)
         plt.ylabel('$A^2$', fontsize = 20)
-        plt.title('Solution found by ' + tit, fontsize = 20)
+        plt.title('Nghiệm tìm bởi ' + tit, fontsize = 20)
         plt.plot(A[:,0],A[:,1], 'bs', markersize = 8, alpha = .8)
         plt.plot(B[:,0],B[:,1], 'ro', markersize = 8, alpha = .8)
         pdf.savefig()
@@ -207,7 +211,10 @@ def TSVM_solver(A,B,y1,y2,c1,c2):
     b2 = v[-1]
     return w1, b1, w2, b2
 
+start_time = time.time()
 w1_tsvm, b1_tsvm, w2_tsvm, b2_tsvm = TSVM_solver(A,B,A_labels,B_labels,c1=1.5,c2=1.5)
+end_time = time.time()
+print('total run-time of TSVM: %f ms' %((end_time - start_time)*1000))
 
 def myplot12(A, B, w1, b1, w2, b2, filename, tit):
     with PdfPages(filename) as pdf:
@@ -243,13 +250,13 @@ def myplot12(A, B, w1, b1, w2, b2, filename, tit):
 
         plt.xlabel('$A^1$', fontsize = 20)
         plt.ylabel('$A^2$', fontsize = 20)
-        plt.title('Solution found by ' + tit, fontsize = 20)
+        plt.title('Nghiệm tìm bởi ' + tit, fontsize = 20)
         plt.plot(A[:,0],A[:,1], 'bs', markersize = 8, alpha = .8)
         plt.plot(B[:,0],B[:,1], 'ro', markersize = 8, alpha = .8)
         pdf.savefig()
         plt.show()
 
-myplot12(A, B, w1_TSVM, b1_TSVM,w2_TSVM,b2_TSVM, 'tsvm_dual.pdf', 'TSVM')
+myplot12(A, B, w1_tsvm, b1_tsvm,w2_tsvm,b2_tsvm, 'tsvm_dual.pdf', 'TSVM')
 
 def predict_class(x,w1,b1,w2,b2):
     y1 = np.abs(x.T.dot(w1) + b1)
@@ -271,7 +278,7 @@ def predict_TSVM(X,w1,b1,w2,b2):
     y_pred_TSVM = np.array(y_pred).reshape((X.shape[0],))
     return y_pred_TSVM
 
-y_pred_TSVM = predict_TSVM(C, w1_TSVM,b1_TSVM,w2_TSVM,b2_TSVM)
+y_pred_TSVM = predict_TSVM(C, w1_tsvm,b1_tsvm,w2_tsvm,b2_tsvm)
 accuracy_train = np.mean(y == y_pred_TSVM)
 
 print('accuracy of SVM: ', 100*np.mean(y == y_pred_SVM))
